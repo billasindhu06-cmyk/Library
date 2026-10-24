@@ -122,15 +122,45 @@
       width: 44 + (n * 13) % 22
     };
   }
-  const books = titles.map(t => makeBook(t));
+  const samples = titles.map(t => makeBook(t)); // shown only while her shelf is empty
+  let books = [];                                // books she added, saved in IndexedDB
+
+  // --- Saving books in the browser (IndexedDB) ---
+  function openDB() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open("library", 1);
+      req.onupgradeneeded = () =>
+        req.result.createObjectStore("books", { keyPath: "id", autoIncrement: true });
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+  async function saveBook(book) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction("books", "readwrite");
+      const req = tx.objectStore("books").add(book);
+      tx.oncomplete = () => resolve(req.result); // the new book's id
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+  async function loadBooks() {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const req = db.transaction("books").objectStore("books").getAll();
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
 
   const caseEl = document.getElementById("case");
   function render() {
     caseEl.replaceChildren();
-    for (let i = 0; i < books.length; i += perShelf) {
+    const list = books.length ? books : samples;
+    for (let i = 0; i < list.length; i += perShelf) {
       const shelf = document.createElement("div");
       shelf.className = "shelf";
-      books.slice(i, i + perShelf).forEach(b => {
+      list.slice(i, i + perShelf).forEach(b => {
         const el = document.createElement("div");
         el.className = "book";
         el.tabIndex = 0;
@@ -144,18 +174,38 @@
       caseEl.appendChild(shelf);
     }
   }
-  render();
-
-  // Add a book: pick one or more PDFs, each becomes a spine at the front
+  // Add a book: pick one or more PDFs, each becomes a spine and is saved
   const picker = document.getElementById("picker");
   document.getElementById("addBtn").addEventListener("click", () => picker.click());
-  picker.addEventListener("change", () => {
-    for (const file of picker.files) {
-      books.unshift(makeBook(file.name.replace(/\.pdf$/i, ""), file));
-    }
+  picker.addEventListener("change", async () => {
+    const files = [...picker.files];
     picker.value = "";
+    for (const file of files) {
+      const book = makeBook(file.name.replace(/\.pdf$/i, ""), file);
+      book.added = Date.now();
+      books.unshift(book);
+      try {
+        book.id = await saveBook(book);
+      } catch (err) {
+        console.error(err);
+        alert("This book is on the shelf, but couldn't be saved in the browser.");
+      }
+    }
     render();
   });
+
+  // On page load: bring back the saved books
+  (async () => {
+    try {
+      books = await loadBooks();
+      books.sort((a, b) => b.added - a.added);
+      seed = samples.length + books.length;
+      if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
+    } catch (err) {
+      console.error(err);
+    }
+    render();
+  })();
 </script>
 </body>
 </html>
