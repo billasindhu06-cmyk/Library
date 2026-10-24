@@ -86,6 +86,28 @@
     cursor: pointer;
   }
   .add:focus-visible { outline: 2px solid var(--paper); outline-offset: 3px; }
+  .reader {
+    position: fixed;
+    inset: 0;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    background: rgba(10, 20, 17, .97);
+  }
+  .reader[hidden] { display: none; }
+  .bar { display: flex; align-items: center; gap: 14px; padding: 10px 16px; }
+  .bar strong { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bar a { color: var(--paper); }
+  .danger {
+    font: inherit;
+    background: none;
+    color: #eeaaaa;
+    border: 1px solid #eeaaaa;
+    border-radius: 4px;
+    padding: 9px 16px;
+    cursor: pointer;
+  }
+  #readerFrame { flex: 1; border: 0; background: #fff; }
   @media (prefers-reduced-motion: reduce) { .book { transition: none; } }
 </style>
 </head>
@@ -98,16 +120,17 @@
   </div>
   <div class="case" id="case"></div>
 
+  <div class="reader" id="reader" hidden>
+    <div class="bar">
+      <strong id="readerTitle"></strong>
+      <a id="readerTab" target="_blank" rel="noopener">Open in new tab</a>
+      <button id="removeBtn" class="danger">Remove book</button>
+      <button id="closeBtn" class="add">Close</button>
+    </div>
+    <iframe id="readerFrame" title="Book"></iframe>
+  </div>
+
 <script>
-  // Fake books for now. In a later stage these come from PDFs she adds.
-  const titles = [
-    "Pride and Prejudice", "Moby Dick", "Jane Eyre", "Dracula",
-    "Frankenstein", "Little Women", "Emma", "Great Expectations",
-    "Wuthering Heights", "The Odyssey", "Hamlet", "Middlemarch",
-    "Persuasion", "Walden", "Siddhartha", "The Hobbit",
-    "Anne of Green Gables", "Dubliners", "Beloved", "Rebecca",
-    "Kim", "Candide", "Ulysses", "Heidi"
-  ];
   const colors = ["#7a2e2e", "#2f4b6e", "#3d5a3a", "#5b3a6b", "#8a5a2b", "#244c4c", "#6b2f45", "#43434f"];
   const perShelf = 8;
 
@@ -122,8 +145,7 @@
       width: 44 + (n * 13) % 22
     };
   }
-  const samples = titles.map(t => makeBook(t)); // shown only while her shelf is empty
-  let books = [];                                // books she added, saved in IndexedDB
+  let books = []; // books she added, saved in IndexedDB
 
   // --- Saving books in the browser (IndexedDB) ---
   function openDB() {
@@ -153,14 +175,24 @@
     });
   }
 
+  async function deleteBook(id) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction("books", "readwrite");
+      tx.objectStore("books").delete(id);
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
   const caseEl = document.getElementById("case");
   function render() {
     caseEl.replaceChildren();
-    const list = books.length ? books : samples;
-    for (let i = 0; i < list.length; i += perShelf) {
+    const shelfCount = Math.max(3, Math.ceil(books.length / perShelf));
+    for (let s = 0; s < shelfCount; s++) {
       const shelf = document.createElement("div");
       shelf.className = "shelf";
-      list.slice(i, i + perShelf).forEach(b => {
+      books.slice(s * perShelf, (s + 1) * perShelf).forEach(b => {
         const el = document.createElement("div");
         el.className = "book";
         el.tabIndex = 0;
@@ -169,11 +201,55 @@
         el.style.height = b.height + "px";
         el.style.width = b.width + "px";
         el.textContent = b.title;
+        el.setAttribute("role", "button");
+        el.addEventListener("click", () => openBook(b));
+        el.addEventListener("keydown", e => {
+          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openBook(b); }
+        });
         shelf.appendChild(el);
       });
       caseEl.appendChild(shelf);
     }
   }
+  // Reader: open a book to read it, or remove it
+  const reader = document.getElementById("reader");
+  const frame = document.getElementById("readerFrame");
+  let current = null, currentUrl = null;
+  function openBook(book) {
+    if (!book.file) return;
+    current = book;
+    currentUrl = URL.createObjectURL(book.file);
+    document.getElementById("readerTitle").textContent = book.title;
+    document.getElementById("readerTab").href = currentUrl;
+    frame.src = currentUrl;
+    reader.hidden = false;
+    document.getElementById("closeBtn").focus();
+  }
+  function closeReader() {
+    reader.hidden = true;
+    frame.src = "about:blank";
+    if (currentUrl) URL.revokeObjectURL(currentUrl);
+    current = null;
+    currentUrl = null;
+  }
+  document.getElementById("closeBtn").addEventListener("click", closeReader);
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape" && !reader.hidden) closeReader();
+  });
+  document.getElementById("removeBtn").addEventListener("click", async () => {
+    if (!current || !confirm("Remove “" + current.title + "” from your library?")) return;
+    const gone = current;
+    closeReader();
+    books = books.filter(b => b !== gone);
+    try {
+      if (gone.id != null) await deleteBook(gone.id);
+    } catch (err) {
+      console.error(err);
+      alert("The book left the shelf, but couldn’t be removed from the browser’s storage.");
+    }
+    render();
+  });
+
   // Add a book: pick one or more PDFs, each becomes a spine and is saved
   const picker = document.getElementById("picker");
   document.getElementById("addBtn").addEventListener("click", () => picker.click());
@@ -199,7 +275,7 @@
     try {
       books = await loadBooks();
       books.sort((a, b) => b.added - a.added);
-      seed = samples.length + books.length;
+      seed = books.length;
       if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
     } catch (err) {
       console.error(err);
