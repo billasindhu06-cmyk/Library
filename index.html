@@ -75,12 +75,27 @@
     opacity: .75;
   }
   .spine { display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  .actions { text-align: center; margin-bottom: 24px; }
+  .add {
+    font: inherit;
+    background: var(--brass);
+    color: #2a1a10;
+    border: 0;
+    border-radius: 4px;
+    padding: 10px 20px;
+    cursor: pointer;
+  }
+  .add:focus-visible { outline: 2px solid var(--paper); outline-offset: 3px; }
   @media (prefers-reduced-motion: reduce) { .book { transition: none; } }
 </style>
 </head>
 <body>
   <h1>My Library</h1>
   <p class="sub">Every book you read lives here.</p>
+  <div class="actions">
+    <button id="addBtn" class="add">Add a book</button>
+    <input type="file" id="picker" accept=".pdf,application/pdf" multiple hidden>
+  </div>
   <div class="case" id="case"></div>
 
 <script>
@@ -96,24 +111,51 @@
   const colors = ["#7a2e2e", "#2f4b6e", "#3d5a3a", "#5b3a6b", "#8a5a2b", "#244c4c", "#6b2f45", "#43434f"];
   const perShelf = 8;
 
-  const caseEl = document.getElementById("case");
-  for (let i = 0; i < titles.length; i += perShelf) {
-    const shelf = document.createElement("div");
-    shelf.className = "shelf";
-    titles.slice(i, i + perShelf).forEach((title, j) => {
-      const n = i + j;
-      const book = document.createElement("div");
-      book.className = "book";
-      book.tabIndex = 0;
-      book.title = title;
-      book.style.background = colors[n % colors.length];
-      book.style.height = (150 + (n * 37) % 60) + "px";
-      book.style.width = (44 + (n * 13) % 22) + "px";
-      book.textContent = title;
-      shelf.appendChild(book);
-    });
-    caseEl.appendChild(shelf);
+  let seed = 0;
+  function makeBook(title, file = null) {
+    const n = seed++;
+    return {
+      title,
+      file, // the PDF she picked (null for the fake books)
+      color: colors[n % colors.length],
+      height: 150 + (n * 37) % 60,
+      width: 44 + (n * 13) % 22
+    };
   }
+  const books = titles.map(t => makeBook(t));
+
+  const caseEl = document.getElementById("case");
+  function render() {
+    caseEl.replaceChildren();
+    for (let i = 0; i < books.length; i += perShelf) {
+      const shelf = document.createElement("div");
+      shelf.className = "shelf";
+      books.slice(i, i + perShelf).forEach(b => {
+        const el = document.createElement("div");
+        el.className = "book";
+        el.tabIndex = 0;
+        el.title = b.title;
+        el.style.background = b.color;
+        el.style.height = b.height + "px";
+        el.style.width = b.width + "px";
+        el.textContent = b.title;
+        shelf.appendChild(el);
+      });
+      caseEl.appendChild(shelf);
+    }
+  }
+  render();
+
+  // Add a book: pick one or more PDFs, each becomes a spine at the front
+  const picker = document.getElementById("picker");
+  document.getElementById("addBtn").addEventListener("click", () => picker.click());
+  picker.addEventListener("change", () => {
+    for (const file of picker.files) {
+      books.unshift(makeBook(file.name.replace(/\.pdf$/i, ""), file));
+    }
+    picker.value = "";
+    render();
+  });
 </script>
 </body>
 </html>
